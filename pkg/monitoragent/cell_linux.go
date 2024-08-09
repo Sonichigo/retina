@@ -4,14 +4,14 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cilium/cilium/pkg/common"
 	"github.com/cilium/cilium/pkg/defaults"
-	"github.com/cilium/cilium/pkg/hive/cell"
 	"github.com/cilium/cilium/pkg/logging"
 	"github.com/cilium/cilium/pkg/logging/logfields"
 	ciliumagent "github.com/cilium/cilium/pkg/monitor/agent"
 	"github.com/cilium/cilium/pkg/monitor/agent/consumer"
 	"github.com/cilium/cilium/pkg/monitor/agent/listener"
+	"github.com/cilium/ebpf"
+	"github.com/cilium/hive/cell"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
 )
@@ -64,11 +64,15 @@ func newMonitorAgent(params agentParams) ciliumagent.Agent {
 
 	params.Lifecycle.Append(cell.Hook{
 		OnStart: func(cell.HookContext) error {
-			var err error
 			if params.Config.EnableMonitor {
 				queueSize := params.Config.MonitorQueueSize
 				if queueSize == 0 {
-					queueSize = common.GetNumPossibleCPUs(log) * defaults.MonitorQueueSizePerCPU
+					possibleCPUs, err := ebpf.PossibleCPU()
+					if err != nil {
+						log.WithError(err).Error("failed to get number of possible CPUs")
+						return fmt.Errorf("failed to get number of possible CPUs: %w", err)
+					}
+					queueSize = possibleCPUs * defaults.MonitorQueueSizePerCPU
 					if queueSize > defaults.MonitorQueueSizePerCPUMaximum {
 						queueSize = defaults.MonitorQueueSizePerCPUMaximum
 					}
@@ -80,7 +84,7 @@ func newMonitorAgent(params agentParams) ciliumagent.Agent {
 					return fmt.Errorf("encountered error serving monitor agent API: %w", monitorErr)
 				}
 			}
-			return err
+			return nil
 		},
 		OnStop: func(cell.HookContext) error {
 			cancel()

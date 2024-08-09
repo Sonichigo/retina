@@ -4,7 +4,7 @@ import (
 	"context"
 
 	daemonk8s "github.com/cilium/cilium/daemon/k8s"
-	"github.com/cilium/cilium/pkg/hive/cell"
+	"github.com/cilium/cilium/pkg/hive"
 	"github.com/cilium/cilium/pkg/identity/cache"
 	"github.com/cilium/cilium/pkg/ipcache"
 	ciliumk8s "github.com/cilium/cilium/pkg/k8s"
@@ -19,6 +19,8 @@ import (
 	"github.com/cilium/cilium/pkg/k8s/watchers"
 	"github.com/cilium/cilium/pkg/node"
 	"github.com/cilium/cilium/pkg/option"
+	"github.com/cilium/hive/cell"
+	"github.com/cilium/statedb"
 	"github.com/microsoft/retina/pkg/common"
 	"github.com/microsoft/retina/pkg/pubsub"
 	"github.com/sirupsen/logrus"
@@ -110,10 +112,17 @@ var Cell = cell.Module(
 		})
 	}),
 
-	cell.Provide(func() *ciliumk8s.ServiceCache {
+	cell.Provide(
+		hive.NewStateDBMetrics,
+		hive.NewStateDBReconcilerMetrics,
+	),
+
+	statedb.Cell,
+
+	cell.Invoke(func() {
 		option.Config.K8sServiceCacheSize = 1000
-		return ciliumk8s.NewServiceCache(&nodeaddressing{})
 	}),
+	ciliumk8s.ServiceCacheCell,
 
 	cell.Provide(func() node.LocalNodeSynchronizer {
 		return &nodeSynchronizer{
@@ -124,7 +133,7 @@ var Cell = cell.Module(
 
 	synced.Cell,
 
-	cell.Provide(NewWatcher),
+	watchers.Cell,
 
 	cell.Provide(newAPIServerEventHandler),
 	cell.Invoke(func(a *APIServerEventHandler) {

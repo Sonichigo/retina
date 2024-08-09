@@ -53,7 +53,6 @@ func (e *epDecoder) Decode(ip netip.Addr) *flow.Endpoint {
 	case identity.ReservedIdentityWorld:
 		ep.Labels = labels.LabelWorld.GetModel()
 	default:
-		ep.Labels = e.ipcache.GetMetadataLabelsByIP(ip).GetModel()
 	}
 
 	return ep

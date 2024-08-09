@@ -6,8 +6,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/cilium/cilium/pkg/hive"
 	"github.com/cilium/cilium/pkg/option"
+	"github.com/cilium/hive"
 	ciliumcrds "github.com/microsoft/retina/operator/cmd/cilium-crds"
 	"github.com/spf13/cobra"
 )

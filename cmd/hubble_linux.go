@@ -5,7 +5,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/cilium/cilium/pkg/hive"
+	"github.com/cilium/hive"
 	"github.com/microsoft/retina/cmd/hubble"
 	"github.com/microsoft/retina/internal/buildinfo"
 	"github.com/spf13/cobra"

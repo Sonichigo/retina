@@ -7,6 +7,7 @@ package hubble
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -15,9 +16,6 @@ import (
 	"github.com/microsoft/retina/pkg/managers/pluginmanager"
 	"github.com/microsoft/retina/pkg/managers/servermanager"
 
-	retinak8s "github.com/microsoft/retina/pkg/k8s"
-
-	"github.com/cilium/cilium/pkg/hive/cell"
 	v1 "github.com/cilium/cilium/pkg/hubble/api/v1"
 	"github.com/cilium/cilium/pkg/ipcache"
 	"github.com/cilium/cilium/pkg/k8s"
@@ -25,6 +23,8 @@ import (
 	"github.com/cilium/cilium/pkg/k8s/watchers"
 	monitoragent "github.com/cilium/cilium/pkg/monitor/agent"
 	"github.com/cilium/cilium/pkg/node"
+	"github.com/cilium/cilium/pkg/option"
+	"github.com/cilium/hive/cell"
 	"github.com/cilium/workerpool"
 
 	corev1 "k8s.io/api/core/v1"
@@ -132,7 +132,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	// Start K8s watcher. Will block till sync is complete or timeout.
 	// If sync doesn't complete within timeout (3 minutes), causes fatal error.
-	retinak8s.Start(ctx, d.k8swatcher)
+	logger.Info("Starting Kubernetes watcher")
+
+	option.Config.K8sSyncTimeout = 3 * time.Minute //nolint:gomnd // this duration is self-explanatory
+	syncdCache := make(chan struct{})
+	go d.k8swatcher.InitK8sSubsystem(ctx, syncdCache)
+	// Wait for K8s watcher to sync. If doesn't complete in 3 minutes, causes fatal error.
+	<-syncdCache
+	logger.Info("Kubernetes watcher synced")
 
 	go d.generateEvents(ctx)
 	return nil

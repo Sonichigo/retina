@@ -15,8 +15,6 @@ import (
 
 	zaphook "github.com/Sytten/logrus-zap-hook"
 	"github.com/cilium/cilium/pkg/defaults"
-	"github.com/cilium/cilium/pkg/hive"
-	"github.com/cilium/cilium/pkg/hive/cell"
 	v1 "github.com/cilium/cilium/pkg/hubble/api/v1"
 	"github.com/cilium/cilium/pkg/hubble/exporter/exporteroption"
 	"github.com/cilium/cilium/pkg/hubble/observer/observeroption"
@@ -24,6 +22,7 @@ import (
 	"github.com/cilium/cilium/pkg/k8s"
 	k8sClient "github.com/cilium/cilium/pkg/k8s/client"
 	"github.com/cilium/cilium/pkg/k8s/watchers"
+	"github.com/cilium/cilium/pkg/logging"
 	"github.com/cilium/cilium/pkg/metrics"
 	monitorAgent "github.com/cilium/cilium/pkg/monitor/agent"
 	monitorAPI "github.com/cilium/cilium/pkg/monitor/api"
@@ -31,7 +30,8 @@ import (
 	"github.com/cilium/cilium/pkg/option"
 	"github.com/cilium/cilium/pkg/promise"
 	"github.com/cilium/cilium/pkg/time"
-	"github.com/cilium/proxy/pkg/logging"
+	"github.com/cilium/hive"
+	"github.com/cilium/hive/cell"
 	"github.com/microsoft/retina/internal/buildinfo"
 	"github.com/microsoft/retina/pkg/config"
 	"github.com/microsoft/retina/pkg/log"
@@ -303,7 +303,7 @@ func Execute(cobraCmd *cobra.Command, h *hive.Hive) {
 	//nolint:gocritic // without granular commits this commented-out code may be lost
 	// initEnv(h.Viper())
 
-	if err := h.Run(); err != nil {
+	if err := h.Run(logging.DefaultSlogLogger); err != nil {
 		logger.Fatal(err)
 	}
 }
