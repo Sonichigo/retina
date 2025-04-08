@@ -195,11 +195,11 @@ func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// Create a predicate to filter node events
 	nodePredicate := predicate.Funcs{
-		CreateFunc: func(_ event.CreateEvent) bool {
+		CreateFunc: func(event.CreateEvent) bool {
 			// Always reconcile on node creation
 			return true
 		},
-		DeleteFunc: func(_ event.DeleteEvent) bool {
+		DeleteFunc: func(event.DeleteEvent) bool {
 			// Always reconcile on node deletion
 			return true
 		},
@@ -223,7 +223,7 @@ func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			// Only reconcile if IPs changed
 			return !reflect.DeepEqual(oldIPs, newIPs)
 		},
-		GenericFunc: func(e event.GenericEvent) bool {
+		GenericFunc: func(event.GenericEvent) bool {
 			return false
 		},
 	}
