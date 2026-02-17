@@ -25,6 +25,7 @@ data:
     bypassLookupIPOfInterest: {{ .Values.bypassLookupIPOfInterest }}
     dataAggregationLevel: {{ .Values.dataAggregationLevel }}
     telemetryInterval: {{ .Values.daemonset.telemetryInterval }}
+    dataSamplingRate: {{ .Values.dataSamplingRate }}
 {{- end}}
 ---
 {{- if .Values.os.windows}}
@@ -49,6 +50,7 @@ data:
     enableTelemetry: {{ .Values.enableTelemetry }}
     enablePodLevel: {{ .Values.enablePodLevel }}
     remoteContext: {{ .Values.remoteContext }}
+    enableAnnotations: {{ .Values.enableAnnotations }}
     telemetryInterval: {{ .Values.daemonset.telemetryInterval }}
 {{- end}}
 

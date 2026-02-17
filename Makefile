@@ -12,6 +12,7 @@ ifndef TAG
 endif
 OUTPUT_DIR = $(REPO_ROOT)/output
 ARTIFACTS_DIR = $(REPO_ROOT)/artifacts
+OUTPUT_LOCAL ?= --output type=local,dest=$(ARTIFACTS_DIR)
 BUILD_DIR = $(OUTPUT_DIR)/$(GOOS)_$(GOARCH)
 RETINA_BUILD_DIR = $(BUILD_DIR)/retina
 RETINA_DIR = $(REPO_ROOT)/controller
@@ -41,7 +42,7 @@ PLATFORM		?= $(OS)/$(ARCH)
 PLATFORMS		?= linux/amd64 linux/arm64 windows/amd64
 OS_VERSION		?= ltsc2019
 
-HUBBLE_VERSION ?= v1.17.5
+HUBBLE_VERSION ?= v1.18.3
 
 CONTAINER_BUILDER ?= docker
 CONTAINER_RUNTIME ?= docker
@@ -67,7 +68,7 @@ RETINA_PLATFORM_TAG        ?= $(TAG)-$(subst /,-,$(PLATFORM))
 # used for looping through components in container build
 AGENT_TARGETS ?= init agent
 
-WINDOWS_YEARS ?= "2019 2022"
+WINDOWS_YEARS ?= 2019 2022
 
 # for windows os, add year to the platform tag
 ifeq ($(OS),windows)
@@ -172,6 +173,7 @@ RETINA_INIT_IMAGE				= $(IMAGE_NAMESPACE)/retina-init
 RETINA_OPERATOR_IMAGE			= $(IMAGE_NAMESPACE)/retina-operator
 RETINA_SHELL_IMAGE				= $(IMAGE_NAMESPACE)/retina-shell
 KUBECTL_RETINA_IMAGE			= $(IMAGE_NAMESPACE)/kubectl-retina
+KUBECTL_RETINA_SHELL_IMAGE		= $(IMAGE_NAMESPACE)/kubectl-retina-shell
 RETINA_INTEGRATION_TEST_IMAGE	= $(IMAGE_NAMESPACE)/retina-integration-test
 RETINA_PROTO_IMAGE				= $(IMAGE_NAMESPACE)/retina-proto-gen
 RETINA_GO_GEN_IMAGE				= $(IMAGE_NAMESPACE)/retina-go-gen
@@ -213,7 +215,6 @@ buildx:
 	fi;
 
 
-
 container-docker: buildx # util target to build container images using docker buildx. do not invoke directly.
 	os=$$(echo $(PLATFORM) | cut -d'/' -f1); \
 	arch=$$(echo $(PLATFORM) | cut -d'/' -f2); \
@@ -234,10 +235,31 @@ container-docker: buildx # util target to build container images using docker bu
 		--build-arg VERSION=$(VERSION) $(EXTRA_BUILD_ARGS) \
 		--target=$(TARGET) \
 		-t $(IMAGE_REGISTRY)/$(IMAGE):$(TAG) \
-		--output type=local,dest=$(ARTIFACTS_DIR) \
+		$(OUTPUT_LOCAL) \
 		$(BUILDX_ACTION) \
 		$(CONTEXT_DIR) 
 
+container-docker-windows: # util target to build Windows container images without buildx. do not invoke directly.
+	os=$$(echo $(PLATFORM) | cut -d'/' -f1); \
+	arch=$$(echo $(PLATFORM) | cut -d'/' -f2); \
+	image_name=$$(basename $(IMAGE)); \
+	echo "Building $$image_name for $$os/$$arch "; \
+	docker build \
+		--platform $(PLATFORM) \
+		-f $(DOCKERFILE) \
+		--build-arg BUILDPLATFORM=$(PLATFORM) \
+		--build-arg APP_INSIGHTS_ID=$(APP_INSIGHTS_ID) \
+		--build-arg GOARCH=$$arch \
+		--build-arg GOOS=$$os \
+		--build-arg OS_VERSION=$(OS_VERSION) \
+		--build-arg HUBBLE_VERSION=$(HUBBLE_VERSION) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg REPO_PATH=$(REPO_PATH) \
+		--build-arg BINARIES_PATH=$(BINARIES_PATH) \
+		$(EXTRA_BUILD_ARGS) \
+		--target=$(TARGET) \
+		-t $(IMAGE_REGISTRY)/$(IMAGE):$(TAG) \
+		$(CONTEXT_DIR)
 
 retina-image: ## build the retina linux container image.
 	echo "Building for $(PLATFORM)"
@@ -260,20 +282,24 @@ retina-image: ## build the retina linux container image.
 				TARGET=$$target; \
 	done
 
-retina-image-win: ## build the retina Windows container image.
+retina-image-win: build-windows-binaries ## build the retina Windows container image.
+# The Windows images are built on a corresponding Windows host without buildx.
+# This is done to mitigate CVE-2013-3900.
 	for year in $(WINDOWS_YEARS); do \
 		tag=$(TAG)-windows-ltsc$$year-amd64; \
-		echo "Building $(RETINA_PLATFORM_TAG)"; \
+		echo "Building $$tag"; \
 		set -e ; \
-		$(MAKE) container-$(CONTAINER_BUILDER) \
+		$(MAKE) container-docker-windows \
 				PLATFORM=windows/amd64 \
-				DOCKERFILE=controller/Dockerfile \
+				DOCKERFILE=controller/Dockerfile.windows-$$year \
 				REGISTRY=$(IMAGE_REGISTRY) \
 				IMAGE=$(RETINA_IMAGE) \
 				OS_VERSION=ltsc$$year \
 				VERSION=$(TAG) \
 				TAG=$$tag \
 				TARGET=agent-win \
+				REPO_PATH=$(REPO_PATH) \
+				BINARIES_PATH=$(BINARIES_PATH) \
 				CONTEXT_DIR=$(REPO_ROOT); \
 	done
 
@@ -300,6 +326,7 @@ retina-shell-image:
 			IMAGE=$(RETINA_SHELL_IMAGE) \
 			VERSION=$(TAG) \
 			TAG=$(RETINA_PLATFORM_TAG) \
+			OUTPUT_LOCAL= \
 			CONTEXT_DIR=$(REPO_ROOT)
 
 kubectl-retina-image:
@@ -314,6 +341,20 @@ kubectl-retina-image:
 			TAG=$(RETINA_PLATFORM_TAG) \
 			CONTEXT_DIR=$(REPO_ROOT) \
 			EXTRA_BUILD_ARGS=$(EXTRA_BUILD_ARGS)
+
+kubectl-retina-shell-image:
+	echo "Building shell-enabled kubectl-retina for $(PLATFORM)"
+	set -e ; \
+	$(MAKE) container-$(CONTAINER_BUILDER) \
+			PLATFORM=$(PLATFORM) \
+			DOCKERFILE=cli/Dockerfile \
+			REGISTRY=$(IMAGE_REGISTRY) \
+			IMAGE=$(KUBECTL_RETINA_SHELL_IMAGE) \
+			VERSION=$(TAG) \
+			TAG=$(RETINA_PLATFORM_TAG) \
+		CONTEXT_DIR=$(REPO_ROOT) \
+		TARGET=shell-target \
+		EXTRA_BUILD_ARGS=$(EXTRA_BUILD_ARGS)
 
 kapinger-image: 
 	docker buildx build --builder retina --platform windows/amd64 --target windows-amd64 -t $(IMAGE_REGISTRY)/$(KAPINGER_IMAGE):$(TAG)-windows-amd64  ./hack/tools/kapinger/ --push
@@ -346,6 +387,21 @@ all-gen: ## generate all code
 	$(MAKE) proto-gen
 	$(MAKE) go-gen
 
+build-windows-binaries: ## Build Windows binaries
+	@echo "Building Windows binaries for $(GOARCH)..."
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=windows GOARCH=$(GOARCH) go build -v \
+		-o $(BUILD_DIR)/captureworkload.exe \
+		-ldflags "-X github.com/microsoft/retina/internal/buildinfo.Version=$(TAG) \
+		-X github.com/microsoft/retina/internal/buildinfo.ApplicationInsightsID=$(APP_INSIGHTS_ID)" \
+		$(CAPTURE_WORKLOAD_DIR)/main.go
+	CGO_ENABLED=0 GOOS=windows GOARCH=$(GOARCH) go build -v \
+		-o $(BUILD_DIR)/controller.exe \
+		-ldflags "-X github.com/microsoft/retina/internal/buildinfo.Version=$(TAG) \
+		-X github.com/microsoft/retina/internal/buildinfo.ApplicationInsightsID=$(APP_INSIGHTS_ID)" \
+		$(RETINA_DIR)/main.go
+	@echo "Windows binaries built successfully in $(BUILD_DIR)"
+
 ##@ Multiplatform
 
 manifest-retina-image: ## create a multiplatform manifest for the retina image
@@ -366,6 +422,10 @@ manifest-kubectl-retina-image:
 	$(eval FULL_IMAGE_NAME=$(IMAGE_REGISTRY)/$(KUBECTL_RETINA_IMAGE):$(TAG))
 	docker buildx imagetools create -t $(FULL_IMAGE_NAME) $(foreach platform,linux/amd64 linux/arm64, $(FULL_IMAGE_NAME)-$(subst /,-,$(platform)))
 
+manifest-kubectl-retina-shell-image:
+	$(eval FULL_IMAGE_NAME=$(IMAGE_REGISTRY)/$(KUBECTL_RETINA_SHELL_IMAGE):$(TAG))
+	docker buildx imagetools create -t $(FULL_IMAGE_NAME) $(foreach platform,linux/amd64 linux/arm64, $(FULL_IMAGE_NAME)-$(subst /,-,$(platform)))
+
 manifest:
 	echo "Building for $(COMPONENT)"
 	if [ "$(COMPONENT)" = "retina" ]; then \
@@ -376,6 +436,8 @@ manifest:
 		$(MAKE) manifest-shell-image; \
 	elif [ "$(COMPONENT)" = "kubectl-retina" ]; then \
 		$(MAKE) manifest-kubectl-retina-image; \
+	elif [ "$(COMPONENT)" = "kubectl-retina-shell" ]; then \
+		$(MAKE) manifest-kubectl-retina-shell-image; \
 	fi
 
 ##@ Tests
@@ -400,7 +462,7 @@ test: # Run unit tests.
 
 coverage: # Code coverage.
 #	go generate ./... && go test -tags=unit -coverprofile=coverage.out.tmp ./...
-	cat coverage.out | grep -v "_bpf.go\|_bpfel_x86.go\|_bpfel_arm64.go|_generated.go|mock_" | grep -v mock > coveragenew.out
+	cat coverage.out | grep -Ev '_bpf\.go|_bpfel_x86\.go|_bpfel_arm64\.go|_generated\.go|mock_' > coveragenew.out
 	go tool cover -html coveragenew.out -o coverage.html
 	go tool cover -func=coveragenew.out -o coverageexpanded.out
 	ls -al
@@ -483,8 +545,8 @@ helm-install-advanced-local-context: manifests
 		--set image.pullPolicy=Always \
 		--set logLevel=info \
 		--set os.windows=true \
-		--set operator.enabled=true \
-		--set operator.enableRetinaEndpoint=true \
+		--set operator.enabled=false \
+		--set operator.enableRetinaEndpoint=false \
 		--set operator.repository=$(IMAGE_REGISTRY)/$(RETINA_OPERATOR_IMAGE) \
 		--skip-crds \
 		--set enabledPlugin_linux="\[dropreason\,packetforward\,linuxutil\,dns\,packetparser\]" \
@@ -575,6 +637,9 @@ simplify-dashboards:
 
 run-perf-test:
 	go test -v ./test/e2e/retina_perf_test.go -timeout 2h -tags=perf -count=1  -args -image-tag=${TAG} -image-registry=${IMAGE_REGISTRY} -image-namespace=${IMAGE_NAMESPACE}
+
+run-e2e-test:
+	go test -v ./test/e2e/ -timeout 1h -tags=e2e -count=1  -args -image-tag=${TAG} -image-registry=${IMAGE_REGISTRY} -image-namespace=${IMAGE_NAMESPACE}
 
 .PHONY: update-hubble
 update-hubble:

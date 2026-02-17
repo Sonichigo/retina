@@ -93,8 +93,8 @@ func (p *packetParser) Generate(ctx context.Context) error {
 	if p.cfg.BypassLookupIPOfInterest {
 		p.l.Info("bypassing lookup IP of interest")
 		bypassLookupIPOfInterest = 1
-		st = fmt.Sprintf("#define BYPASS_LOOKUP_IP_OF_INTEREST %d\n", bypassLookupIPOfInterest)
 	}
+	st = fmt.Sprintf("#define BYPASS_LOOKUP_IP_OF_INTEREST %d\n", bypassLookupIPOfInterest)
 
 	conntrackMetrics := 0
 	// Check if packetparser has Conntrack metrics enabled.
@@ -116,6 +116,10 @@ func (p *packetParser) Generate(ctx context.Context) error {
 	// Process packetparser data aggregation level.
 	p.l.Info("data aggregation level", zap.String("level", p.cfg.DataAggregationLevel.String()))
 	st += fmt.Sprintf("#define DATA_AGGREGATION_LEVEL %d\n", p.cfg.DataAggregationLevel)
+
+	// Process packetparser sampling rate.
+	p.l.Info("sampling rate", zap.Uint32("rate", p.cfg.DataSamplingRate))
+	st += fmt.Sprintf("#define DATA_SAMPLING_RATE %d\n", p.cfg.DataSamplingRate)
 
 	// Generate dynamic header for packetparser.
 	err = loader.WriteFile(ctx, dynamicHeaderPath, st)
@@ -568,6 +572,8 @@ func (p *packetParser) processRecord(ctx context.Context, id int) {
 				zap.Int("worker_id", id),
 			)
 
+			metrics.ParsedPacketsCounter.WithLabelValues().Inc()
+
 			var bpfEvent packetparserPacket
 			err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &bpfEvent)
 			if err != nil {
@@ -602,10 +608,14 @@ func (p *packetParser) processRecord(ctx context.Context, id int) {
 			// Add the traffic direction to the flow.
 			fl.TrafficDirection = flow.TrafficDirection(bpfEvent.TrafficDirection)
 
-			meta := &utils.RetinaMetadata{}
+			ext := utils.NewExtensions()
 
-			// Add packet size to the flow's metadata.
-			utils.AddPacketSize(meta, bpfEvent.Bytes)
+			// Add packet size to the flow's extensions.
+			utils.AddPacketSize(ext, bpfEvent.Bytes)
+
+			// Add previously observed byte and packet counts to the flow's extensions
+			utils.AddPreviouslyObservedBytes(ext, bpfEvent.PreviouslyObservedBytes)
+			utils.AddPreviouslyObservedPackets(ext, bpfEvent.PreviouslyObservedPackets)
 
 			// Add the TCP metadata to the flow.
 			tcpMetadata := bpfEvent.TcpMetadata
@@ -617,18 +627,33 @@ func (p *packetParser) processRecord(ctx context.Context, id int) {
 				uint16((bpfEvent.Flags&TCPFlagRST)>>2), // nolint:gomnd // 2 is the offset for RST.
 				uint16((bpfEvent.Flags&TCPFlagPSH)>>3), // nolint:gomnd // 3 is the offset for PSH.
 				uint16((bpfEvent.Flags&TCPFlagURG)>>5), // nolint:gomnd // 5 is the offset for URG.
+				uint16((bpfEvent.Flags&TCPFlagECE)>>6), // nolint:gomnd // 6 is the offset for ECE.
+				uint16((bpfEvent.Flags&TCPFlagCWR)>>7), // nolint:gomnd // 7 is the offset for CWR.
+				uint16((bpfEvent.Flags&TCPFlagNS)>>8),  // nolint:gomnd // 8 is the offset for NS.
+			)
+			utils.AddPreviouslyObservedTCPFlags(
+				ext,
+				bpfEvent.PreviouslyObservedFlags.Syn,
+				bpfEvent.PreviouslyObservedFlags.Ack,
+				bpfEvent.PreviouslyObservedFlags.Fin,
+				bpfEvent.PreviouslyObservedFlags.Rst,
+				bpfEvent.PreviouslyObservedFlags.Psh,
+				bpfEvent.PreviouslyObservedFlags.Urg,
+				bpfEvent.PreviouslyObservedFlags.Ece,
+				bpfEvent.PreviouslyObservedFlags.Cwr,
+				bpfEvent.PreviouslyObservedFlags.Ns,
 			)
 
 			// For packets originating from node, we use tsval as the tcpID.
 			// Packets coming back has the tsval echoed in tsecr.
 			if fl.GetTraceObservationPoint() == flow.TraceObservationPoint_TO_NETWORK {
-				utils.AddTCPID(meta, uint64(tcpMetadata.Tsval))
+				utils.AddTCPID(ext, uint64(tcpMetadata.Tsval))
 			} else if fl.GetTraceObservationPoint() == flow.TraceObservationPoint_FROM_NETWORK {
-				utils.AddTCPID(meta, uint64(tcpMetadata.Tsecr))
+				utils.AddTCPID(ext, uint64(tcpMetadata.Tsecr))
 			}
 
-			// Add metadata to the flow.
-			utils.AddRetinaMetadata(fl, meta)
+			// Set extensions on the flow.
+			utils.SetExtensions(fl, ext)
 
 			// Write the event to the enricher.
 			ev := &v1.Event{

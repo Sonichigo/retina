@@ -20,13 +20,37 @@ RUN tdnf install -y \
 	nmap \
 	nmap-ncat \
 	openssh \
+	procps-ng \
+	sysstat \
 	socat \
 	tcpdump \
 	wget \
 	tar \
 	file \
 	bpftool \
+	bpftrace \
+	ig \
 	&& tdnf clean all
+
+# Create the entrypoint script to mount debugfs and tracefs
+SHELL ["/bin/bash", "-c"]
+
+RUN echo $'#!/bin/bash\n\
+if ! mountpoint -q /sys/kernel/debug; then\n\
+mount -t debugfs none /sys/kernel/debug\n\
+fi\n\
+if ! mountpoint -q /sys/kernel/tracing; then\n\
+mount -t tracefs tracefs /sys/kernel/tracing\n\
+fi\n\
+exec "$@"' > /usr/local/bin/entrypoint.sh;
+
+# Set the host root directory for IG
+ENV HOST_ROOT=/host
+
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Set the entrypoint
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 # Re-use existing arg from Makefile target "container-docker"
 # https://github.com/microsoft/retina/blob/main/Makefile#L224
